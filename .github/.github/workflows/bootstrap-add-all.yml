@@ -1,0 +1,300 @@
+name: Bootstrap Add Dispatchers, Providers and Build Workflow
+
+# Run this workflow when you push a branch named bootstrap/*
+# Usage: create a new file in GitHub UI with this path and commit to a new branch like "bootstrap/1"
+on:
+  push:
+    branches:
+      - 'bootstrap/*'
+
+jobs:
+  create-files-and-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create branch, add files, modify init block, add build workflow, push and open PR
+        env:
+          REPO: ${{ github.repository }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Branch we will create and push
+          WORK_BRANCH="add-providers-and-dispatchers"
+
+          echo "Creating branch ${WORK_BRANCH}"
+          git checkout -b "${WORK_BRANCH}"
+
+          # Ensure directories exist
+          mkdir -p core/common/src/main/kotlin/com/flixclusive/core/common/dispatchers
+          mkdir -p providers/prosieben
+          mkdir -p .github/workflows
+          mkdir -p domain/catalog/src/main/kotlin/com/flixclusive/domain/catalog/usecase/impl
+
+          # === Write DefaultAppDispatchers.kt ===
+          cat > core/common/src/main/kotlin/com/flixclusive/core/common/dispatchers/DefaultAppDispatchers.kt <<'EOF'
+package com.flixclusive.core.common.dispatchers
+
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+
+/**
+ * Default implementation for AppDispatchers.
+ *
+ * Provides safe, non-null dispatcher and scope defaults for production.
+ * Scopes are created lazily and use SupervisorJob to avoid cancelling sibling coroutines.
+ */
+class DefaultAppDispatchers : AppDispatchers {
+    override val default: CoroutineDispatcher = Dispatchers.Default
+    override val io: CoroutineDispatcher = Dispatchers.IO
+    override val main: CoroutineDispatcher = Dispatchers.Main
+    override val unconfined: CoroutineDispatcher = Dispatchers.Unconfined
+
+    // Lazy-backed scopes so we can detect initialization and avoid init-order issues.
+    private val _ioScope = lazy { CoroutineScope(SupervisorJob() + io) }
+    private val _defaultScope = lazy { CoroutineScope(SupervisorJob() + default) }
+    private val _mainScope = lazy { CoroutineScope(SupervisorJob() + main) }
+
+    override val ioScope: CoroutineScope get() = _ioScope.value
+    override val defaultScope: CoroutineScope get() = _defaultScope.value
+    override val mainScope: CoroutineScope get() = _mainScope.value
+
+    /**
+     * Optional: call this from Application.onTerminate() or tests to cancel scopes.
+     */
+    fun shutdown() {
+        try {
+            if (_ioScope.isInitialized()) _ioScope.value.cancel()
+        } catch (_: Throwable) {}
+        try {
+            if (_defaultScope.isInitialized()) _defaultScope.value.cancel()
+        } catch (_: Throwable) {}
+        try {
+            if (_mainScope.isInitialized()) _mainScope.value.cancel()
+        } catch (_: Throwable) {}
+    }
+}
+EOF
+
+          # === Write AppDispatchersModule.kt ===
+          cat > core/common/src/main/kotlin/com/flixclusive/core/common/dispatchers/AppDispatchersModule.kt <<'EOF'
+package com.flixclusive.core.common.dispatchers
+
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
+
+/**
+ * Provides the AppDispatchers implementation to Hilt DI graph.
+ */
+@Module
+@InstallIn(SingletonComponent::class)
+object AppDispatchersModule {
+    @Provides
+    @Singleton
+    fun provideAppDispatchers(): AppDispatchers = DefaultAppDispatchers()
+}
+EOF
+
+          # === Write Prosieben provider skeleton ===
+          cat > providers/prosieben/ProsiebenProvider.kt <<'EOF'
+package com.flixclusive.providers.prosieben
+
+import com.flixclusive.core.network.util.Resource
+import com.flixclusive.model.film.FilmMetadata
+import com.flixclusive.model.film.FilmSearchItem
+import com.flixclusive.model.provider.ProviderMetadata
+import com.flixclusive.provider.ProviderApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+/**
+ * Skeleton implementation of a ProviderApi for ProSieben HD.
+ * You must adapt method signatures to your project's ProviderApi interface if they differ.
+ *
+ * NOTE: This is a starter skeleton. Implement the TODOs (HTTP requests + HTML/JSON parsing)
+ * to return real data for catalogs, search, metadata and links.
+ */
+class ProsiebenProvider(
+    override val metadata: ProviderMetadata
+) : ProviderApi {
+    override suspend fun getCatalog(url: String): Resource<List<FilmSearchItem>> {
+        return withContext(Dispatchers.IO) {
+            try {
+                // TODO: Implement parsing logic for Prosieben catalogs (HTTP fetch + HTML/XML/JSON parsing)
+                Resource.Success(emptyList())
+            } catch (t: Throwable) {
+                Resource.Error(t)
+            }
+        }
+    }
+
+    override suspend fun getSearchItems(query: String, page: Int): Resource<List<FilmSearchItem>> {
+        return withContext(Dispatchers.IO) {
+            try {
+                // TODO: implement search
+                Resource.Success(emptyList())
+            } catch (t: Throwable) {
+                Resource.Error(t)
+            }
+        }
+    }
+
+    override suspend fun getFilmMetadata(id: String): Resource<FilmMetadata> {
+        return withContext(Dispatchers.IO) {
+            try {
+                // TODO: parse film details page
+                Resource.Success(
+                    // Replace with a proper FilmMetadata instance
+                    TODO("Provide FilmMetadata instance")
+                )
+            } catch (t: Throwable) {
+                Resource.Error(t)
+            }
+        }
+    }
+
+    override suspend fun getLinks(filmId: String): Resource<List<String>> {
+        return withContext(Dispatchers.IO) {
+            try {
+                // TODO: parse stream links
+                Resource.Success(emptyList())
+            } catch (t: Throwable) {
+                Resource.Error(t)
+            }
+        }
+    }
+
+    // Add other required ProviderApi method implementations here.
+}
+EOF
+
+          # === Write Prosieben metadata JSON ===
+          cat > providers/prosieben/prosieben-metadata.json <<'EOF'
+{
+  "id": "prosieben-hd",
+  "name": "ProSieben HD",
+  "baseUrl": "https://www.prosieben.de",
+  "language": "de",
+  "country": "DE",
+  "isEnabledByDefault": true,
+  "version": "1.0.0",
+  "description": "Provider for ProSieben HD channels (skeleton - requires implementing scrapers for catalogs and links)."
+}
+EOF
+
+          # === Add the build-apk workflow that will assemble the APK and upload artifact ===
+          cat > .github/workflows/build-apk.yml <<'EOF'
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      - name: Build debug APK
+        run: ./gradlew :app-mobile:assembleDebug --no-daemon
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: app-mobile/build/outputs/apk/debug/*.apk
+EOF
+
+          # === Attempt to modify GetHomeCatalogsUseCaseImpl.kt init block safely if it exists ===
+          TARGET_FILE="domain/catalog/src/main/kotlin/com/flixclusive/domain/catalog/usecase/impl/GetHomeCatalogsUseCaseImpl.kt"
+
+          if [ -f "${TARGET_FILE}" ]; then
+            echo "Found ${TARGET_FILE}, attempting to replace init { ... } block that launches appDispatchers.defaultScope.launch ..."
+            # Backup original
+            cp "${TARGET_FILE}" "${TARGET_FILE}.bak"
+
+            # Use perl multiline substitution to replace the specific init block pattern.
+            perl -0777 -i -pe 's{init\s*\{\s*appDispatchers\.defaultScope\.launch\s*\{\s*providerApiRepository\.observe\(\)\.collect\s*\{.*?\}\s*\}\s*\}}{init {\n    appDispatchers.defaultScope.launch {\n        try {\n            providerApiRepository.observe().collect { api ->\n                apiChangesHandler.handleOperations(api)\n            }\n        } catch (t: Throwable) {\n            # Log the error using project's logging util (errorLog) if available\n            try {\n                errorLog(\"GetHomeCatalogsUseCaseImpl init coroutine failed\", t)\n            } catch (_: Throwable) {\n                t.printStackTrace()\n            }\n            throw t\n        }\n    }\n}}gs' "${TARGET_FILE}" || ( echo "Perl substitution failed; restoring backup" && mv "${TARGET_FILE}.bak" "${TARGET_FILE}" )
+
+            echo "If substitution happened, a backup was created at ${TARGET_FILE}.bak"
+          else
+            echo "Target file ${TARGET_FILE} not found in checkout — skipping automatic init-block modification"
+          fi
+
+          # === Commit and push branch ===
+          git add -A
+          git commit -m "Add DefaultAppDispatchers + AppDispatchersModule; add Prosieben provider skeleton + metadata; add build workflow; attempt init-block defensive modification" || echo "No changes to commit"
+          echo "Pushing branch ${WORK_BRANCH} to origin..."
+          git push "https://x-access-token:${TOKEN}@github.com/${REPO}" "${WORK_BRANCH}" --force
+
+          # === Create PR via API ===
+          PR_TITLE="Add DefaultAppDispatchers + AppDispatchersModule; add Prosieben provider skeleton; add build workflow"
+          PR_BODY=$(cat <<'PRBODY'
+This PR was created automatically by the bootstrap workflow.
+
+Files added:
+- core/common/src/main/kotlin/com/flixclusive/core/common/dispatchers/DefaultAppDispatchers.kt
+- core/common/src/main/kotlin/com/flixclusive/core/common/dispatchers/AppDispatchersModule.kt
+- providers/prosieben/ProsiebenProvider.kt
+- providers/prosieben/prosieben-metadata.json
+- .github/workflows/build-apk.yml
+
+Additionally, the workflow attempted to replace the `init { ... }` block in:
+- domain/catalog/src/main/kotlin/com/flixclusive/domain/catalog/usecase/impl/GetHomeCatalogsUseCaseImpl.kt
+to add defensive logging around the coroutine that observes providerApiRepository (a backup of the original file was kept with a .bak extension if the file existed).
+
+Next recommended steps:
+- Inspect this PR and adjust the Prosieben provider implementation to match the project's ProviderApi exactly (implement the TODOs).
+- If the init-block change didn't apply cleanly or caused issues, restore the .bak copy or edit the file manually.
+- Merge the PR, and the build workflow will run and produce a debug APK artifact.
+
+PRBODY
+)
+          echo "Creating PR..."
+          curl -s -X POST \
+            -H "Authorization: token ${TOKEN}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${REPO}/pulls" \
+            -d "{\"title\":\"${PR_TITLE}\",\"head\":\"${WORK_BRANCH}\",\"base\":\"main\",\"body\":\"${PR_BODY}\"}" \
+            > /tmp/pr_resp.json
+          echo "PR response:"
+          cat /tmp/pr_resp.json
